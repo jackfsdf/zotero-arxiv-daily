@@ -116,34 +116,18 @@ class ArxivRetriever(BaseRetriever):
         logger.info(f"Keyword search query: {full_query}")
         
         try:
-            # 分页获取结果，每批50篇
-            all_results = []
-            max_results_per_page = 50
-            total_results = 200  # 最多获取200篇
+            search = arxiv.Search(
+                query=full_query,
+                max_results=100,  # 直接设置总结果数
+                sort_by=arxiv.SortCriterion.SubmittedDate,
+                sort_order=arxiv.SortOrder.Descending
+            )
             
-            while start < total_results:
-                search = arxiv.Search(
-                    query=full_query,
-                    max_results=max_results_per_page,
-                    sort_by=arxiv.SortCriterion.SubmittedDate,
-                    sort_order=arxiv.SortOrder.Descending
-                )
-                
-                batch = list(client.results(search))
-                if not batch:  # 没有更多结果
-                    break
-                    
-                all_results.extend(batch)
-                logger.debug(f"Retrieved {len(batch)} papers (total so far: {len(all_results)})")
-                
-                # 如果返回的结果少于请求的数量，说明已经取完
-                if len(batch) < max_results_per_page:
-                    break
-                    
-                start += max_results_per_page
+            # 获取所有结果
+            results = list(client.results(search))
+            logger.info(f"Retrieved {len(results)} papers from keyword search")
             
-            logger.info(f"Retrieved {len(all_results)} papers from keyword search")
-            return all_results
+            return results
                 
         except Exception as e:
             logger.error(f"Error in keyword search: {e}")
