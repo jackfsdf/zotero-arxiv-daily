@@ -66,7 +66,7 @@ class ArxivRetriever(BaseRetriever):
         return raw_papers
     
     def _retrieve_by_keywords(self, client: arxiv.Client) -> list[ArxivResult]:
-        """新增的关键词检索逻辑"""
+        """改进的关键词检索逻辑"""
         # 检查是否配置了关键词
         if not hasattr(self.config.source.arxiv, 'keywords') or not self.config.source.arxiv.keywords:
             return []
@@ -76,25 +76,39 @@ class ArxivRetriever(BaseRetriever):
         keyword_conditions = []
         
         for keyword in keywords:
-            # 如果关键词包含空格，加上引号
+            # 处理带空格的关键词（加引号）
             if ' ' in keyword:
-                keyword_conditions.append(f'abs:"{keyword}"')
-                keyword_conditions.append(f'ti:"{keyword}"')
+                keyword_conditions.append(f'all:"{keyword}"')  # 使用all字段同时搜索标题和摘要
             else:
-                keyword_conditions.append(f'abs:{keyword}')
-                keyword_conditions.append(f'ti:{keyword}')
+                keyword_conditions.append(f'all:{keyword}')
         
-        # 关键词部分：标题或摘要中包含任意关键词
+        # 关键词部分：所有字段中包含任意关键词
         keyword_query = ' OR '.join(keyword_conditions)
         
-        # 时间限制：最近2天
-        two_days_ago = datetime.now() - timedelta(days=2)
-        date_str = two_days_ago.strftime("%Y%m%d")
-        date_query = f"submittedDate:[{date_str}0000 TO *]"
+        # 时间限制：最近2天，使用明确的时间范围（避免通配符*）
+        from datetime import datetime, timedelta
         
-        # 领域限制：cs 分类（计算机科学所有子领域）
-        # 使用 cat:cs.* 匹配所有 cs 子分类
-        category_query = "cat:cs.*"
+        # 起始时间：2天前的00:00
+        start_date = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d")
+        start_datetime = f"{start_date}0000"
+        
+        # 结束时间：当前时间的23:59（或使用当前日期）
+        end_date = datetime.now().strftime("%Y%m%d")
+        end_datetime = f"{end_date}2359"  # 明确的结束时间
+        
+        date_query = f"submittedDate:[{start_datetime} TO {end_datetime}]"
+        
+        # 【关键修改】不使用cat:cs.*通配符，改为显式列出常见CS子领域
+        # 可以根据你的需求调整这个列表
+        cs_categories = [
+            "cs.AI", "cs.LG", "cs.CV", "cs.CL", "cs.RO", 
+            "cs.IR", "cs.MM",   
+            "cs.MA"  
+        ]
+        
+        # 构建分类查询（OR关系）
+        category_conditions = [f"cat:{cat}" for cat in cs_categories]
+        category_query = '(' + ' OR '.join(category_conditions) + ')'
         
         # 组合完整查询
         full_query = f"({keyword_query}) AND {category_query} AND {date_query}"
@@ -102,23 +116,37 @@ class ArxivRetriever(BaseRetriever):
         logger.info(f"Keyword search query: {full_query}")
         
         try:
-            search = arxiv.Search(
-                query=full_query,
-                max_results=50,  # 限制结果数量
-                sort_by=arxiv.SortCriterion.SubmittedDate,
-                sort_order=arxiv.SortOrder.Descending
-            )
+            # 分页获取结果，每批50篇
+            all_results = []
+            start = 0
+            max_results_per_page = 50
+            total_results = 200  # 最多获取200篇
             
-            results = list(client.results(search))
-            logger.info(f"Retrieved {len(results)} papers from keyword search")
-            
-            # 显示匹配的关键词（调试用）
-            if results and self.config.executor.debug:
-                for paper in results[:3]:
-                    logger.debug(f"Keyword match: {paper.title}")
+            while start < total_results:
+                search = arxiv.Search(
+                    query=full_query,
+                    max_results=max_results_per_page,
+                    start=start,  # 添加分页参数
+                    sort_by=arxiv.SortCriterion.SubmittedDate,
+                    sort_order=arxiv.SortOrder.Descending
+                )
+                
+                batch = list(client.results(search))
+                if not batch:  # 没有更多结果
+                    break
                     
-            return results
+                all_results.extend(batch)
+                logger.debug(f"Retrieved {len(batch)} papers (total so far: {len(all_results)})")
+                
+                # 如果返回的结果少于请求的数量，说明已经取完
+                if len(batch) < max_results_per_page:
+                    break
+                    
+                start += max_results_per_page
             
+            logger.info(f"Retrieved {len(all_results)} papers from keyword search")
+            return all_results
+                
         except Exception as e:
             logger.error(f"Error in keyword search: {e}")
             return []
