@@ -9,36 +9,134 @@ from urllib.request import urlretrieve
 from tqdm import tqdm
 import os
 from loguru import logger
+from datetime import datetime, timedelta
+
 @register_retriever("arxiv")
 class ArxivRetriever(BaseRetriever):
     def __init__(self, config):
         super().__init__(config)
         if self.config.source.arxiv.category is None:
             raise ValueError("category must be specified for arxiv.")
+    
     def _retrieve_raw_papers(self) -> list[ArxivResult]:
-        client = arxiv.Client(num_retries=10,delay_seconds=10)
-        query = '+'.join(self.config.source.arxiv.category)
-        # Get the latest paper from arxiv rss feed
-        feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
-        if 'Feed error for query' in feed.feed.title:
-            raise Exception(f"Invalid ARXIV_QUERY: {query}.")
-        raw_papers = []
-        all_paper_ids = [i.id.removeprefix("oai:arXiv.org:") for i in feed.entries if i.get("arxiv_announce_type","new") == 'new']
+        client = arxiv.Client(num_retries=10, delay_seconds=10)
+        
+        # 第一部分：原有的 RSS 分类检索
+        category_papers = self._retrieve_by_category(client)
+        
+        # 第二部分：新增的关键词检索（如果配置了关键词）
+        keyword_papers = self._retrieve_by_keywords(client)
+        
+        # 合并两部分结果，去重
+        all_papers = self._merge_papers(category_papers + keyword_papers)
+        
         if self.config.executor.debug:
-            all_paper_ids = all_paper_ids[:10]
-
-        # Get full information of each paper from arxiv api
-        bar = tqdm(total=len(all_paper_ids))
-        for i in range(0,len(all_paper_ids),20):
+            all_papers = all_papers[:10]
+        
+        return all_papers
+    
+    def _retrieve_by_category(self, client: arxiv.Client) -> list[ArxivResult]:
+        """原有的 RSS 分类检索逻辑"""
+        query = '+'.join(self.config.source.arxiv.category)
+        feed = feedparser.parse(f"https://rss.arxiv.org/atom/{query}")
+        
+        if 'Feed error for query' in feed.feed.title:
+            logger.warning(f"Invalid ARXIV_QUERY: {query}. Skipping category retrieval.")
+            return []
+        
+        all_paper_ids = [
+            i.id.removeprefix("oai:arXiv.org:") for i in feed.entries 
+            if i.get("arxiv_announce_type", "new") == 'new'
+        ]
+        
+        if not all_paper_ids:
+            return []
+        
+        raw_papers = []
+        bar = tqdm(total=len(all_paper_ids), desc="Fetching category papers")
+        
+        for i in range(0, len(all_paper_ids), 20):
             search = arxiv.Search(id_list=all_paper_ids[i:i+20])
             batch = list(client.results(search))
             bar.update(len(batch))
             raw_papers.extend(batch)
+        
         bar.close()
-
+        logger.info(f"Retrieved {len(raw_papers)} papers from category search")
         return raw_papers
+    
+    def _retrieve_by_keywords(self, client: arxiv.Client) -> list[ArxivResult]:
+        """新增的关键词检索逻辑"""
+        # 检查是否配置了关键词
+        if not hasattr(self.config.source.arxiv, 'keywords') or not self.config.source.arxiv.keywords:
+            return []
+        
+        # 构建关键词查询（OR关系）
+        keywords = self.config.source.arxiv.keywords
+        keyword_conditions = []
+        
+        for keyword in keywords:
+            # 如果关键词包含空格，加上引号
+            if ' ' in keyword:
+                keyword_conditions.append(f'abs:"{keyword}"')
+                keyword_conditions.append(f'ti:"{keyword}"')
+            else:
+                keyword_conditions.append(f'abs:{keyword}')
+                keyword_conditions.append(f'ti:{keyword}')
+        
+        # 关键词部分：标题或摘要中包含任意关键词
+        keyword_query = ' OR '.join(keyword_conditions)
+        
+        # 时间限制：最近2天
+        two_days_ago = datetime.now() - timedelta(days=2)
+        date_str = two_days_ago.strftime("%Y%m%d")
+        date_query = f"submittedDate:[{date_str}0000 TO *]"
+        
+        # 领域限制：cs 分类（计算机科学所有子领域）
+        # 使用 cat:cs.* 匹配所有 cs 子分类
+        category_query = "cat:cs.*"
+        
+        # 组合完整查询
+        full_query = f"({keyword_query}) AND {category_query} AND {date_query}"
+        
+        logger.info(f"Keyword search query: {full_query}")
+        
+        try:
+            search = arxiv.Search(
+                query=full_query,
+                max_results=50,  # 限制结果数量
+                sort_by=arxiv.SortCriterion.SubmittedDate,
+                sort_order=arxiv.SortOrder.Descending
+            )
+            
+            results = list(client.results(search))
+            logger.info(f"Retrieved {len(results)} papers from keyword search")
+            
+            # 显示匹配的关键词（调试用）
+            if results and self.config.executor.debug:
+                for paper in results[:3]:
+                    logger.debug(f"Keyword match: {paper.title}")
+                    
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in keyword search: {e}")
+            return []
+    
+    def _merge_papers(self, papers: list[ArxivResult]) -> list[ArxivResult]:
+        """按论文ID去重合并"""
+        seen = set()
+        unique_papers = []
+        
+        for paper in papers:
+            if paper.entry_id not in seen:
+                seen.add(paper.entry_id)
+                unique_papers.append(paper)
+        
+        logger.info(f"Total unique papers after merging: {len(unique_papers)}")
+        return unique_papers
 
-    def convert_to_paper(self, raw_paper:ArxivResult) -> Paper:
+    def convert_to_paper(self, raw_paper: ArxivResult) -> Paper:
         title = raw_paper.title
         authors = [a.name for a in raw_paper.authors]
         abstract = raw_paper.summary
