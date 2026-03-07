@@ -118,7 +118,6 @@ class ArxivRetriever(BaseRetriever):
         try:
             # 分页获取结果，每批50篇
             all_results = []
-            start = 0
             max_results_per_page = 50
             total_results = 200  # 最多获取200篇
             
@@ -126,7 +125,6 @@ class ArxivRetriever(BaseRetriever):
                 search = arxiv.Search(
                     query=full_query,
                     max_results=max_results_per_page,
-                    start=start,  # 添加分页参数
                     sort_by=arxiv.SortCriterion.SubmittedDate,
                     sort_order=arxiv.SortOrder.Descending
                 )
