@@ -89,7 +89,7 @@ class ArxivRetriever(BaseRetriever):
         from datetime import datetime, timedelta
         
         # 起始时间：2天前的00:00
-        start_date = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=20)).strftime("%Y%m%d")
         start_datetime = f"{start_date}0000"
         
         # 结束时间：当前时间的23:59（或使用当前日期）
