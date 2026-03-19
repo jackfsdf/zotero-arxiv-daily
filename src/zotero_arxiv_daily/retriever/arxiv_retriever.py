@@ -146,23 +146,27 @@ class ArxivRetriever(BaseRetriever):
         logger.info(f"Total unique papers after merging: {len(unique_papers)}")
         return unique_papers
 
-    def convert_to_paper(self, raw_paper: ArxivResult) -> Paper:
-        title = raw_paper.title
-        authors = [a.name for a in raw_paper.authors]
-        abstract = raw_paper.summary
-        pdf_url = raw_paper.pdf_url
-        full_text = extract_text_from_pdf(raw_paper)
-        if full_text is None:
-            full_text = extract_text_from_tar(raw_paper)
-        return Paper(
-            source=self.name,
-            title=title,
-            authors=authors,
-            abstract=abstract,
-            url=raw_paper.entry_id,
-            pdf_url=pdf_url,
-            full_text=full_text
-        )
+    def convert_to_paper(self, raw_paper: ArxivResult) -> Paper | None:
+        try:
+            title = raw_paper.title
+            authors = [a.name for a in raw_paper.authors]
+            abstract = raw_paper.summary
+            pdf_url = raw_paper.pdf_url
+            full_text = extract_text_from_pdf(raw_paper)
+            if full_text is None:
+                full_text = extract_text_from_tar(raw_paper)
+            return Paper(
+                source=self.name,
+                title=title,
+                authors=authors,
+                abstract=abstract,
+                url=raw_paper.entry_id,
+                pdf_url=pdf_url,
+                full_text=full_text
+            )
+        except Exception as e:
+            logger.warning(f"Failed to convert paper '{raw_paper.title}': {e}")
+            return None
 
 def extract_text_from_pdf(paper: ArxivResult) -> str | None:
     with TemporaryDirectory() as temp_dir:
