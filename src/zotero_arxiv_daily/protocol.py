@@ -23,7 +23,7 @@ class Paper:
 
     def _generate_tldr_with_llm(self, openai_client:OpenAI,llm_params:dict) -> str:
         lang = llm_params.get('language', 'English')
-        prompt = f"Given the following information of a paper, generate a one-sentence TLDR summary in {lang}:\n\n"
+        prompt = f"Given the following information of a paper, generate a TLDR summary in {lang}.The summary should include four parts: 1. An introduction to the article; 2. The motivation behind the article; 3. The innovative points of the article; 4. The solutions proposed in the article. The language should be concise, with each part consisting of only one sentence or paragraph:\n\n"
         if self.title:
             prompt += f"Title:\n {self.title}\n\n"
 
@@ -40,7 +40,7 @@ class Paper:
         # use gpt-4o tokenizer for estimation
         enc = tiktoken.encoding_for_model("gpt-4o")
         prompt_tokens = enc.encode(prompt)
-        prompt_tokens = prompt_tokens[:4000]  # truncate to 4000 tokens
+        prompt_tokens = prompt_tokens[:8000]  # truncate to 4000 tokens
         prompt = enc.decode(prompt_tokens)
         
         response = openai_client.chat.completions.create(
