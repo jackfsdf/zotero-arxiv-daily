@@ -21,8 +21,7 @@ class LocalReranker(BaseReranker):
 
         encoder = SentenceTransformer(
             self.config.reranker.local.model,
-            model_kwargs={"trust_remote_code": True},
-            tokenizer_kwargs={"trust_remote_code": True},
+            trust_remote_code=True,
         )
         if self.config.reranker.local.encode_kwargs:
             encode_kwargs = self.config.reranker.local.encode_kwargs
