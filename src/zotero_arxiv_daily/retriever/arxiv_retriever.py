@@ -8,6 +8,7 @@ import feedparser
 from urllib.request import urlretrieve
 from tqdm import tqdm
 import os
+import time
 from loguru import logger
 from datetime import datetime, timedelta
 
@@ -55,11 +56,25 @@ class ArxivRetriever(BaseRetriever):
         raw_papers = []
         bar = tqdm(total=len(all_paper_ids), desc="Fetching category papers")
         
-        for i in range(0, len(all_paper_ids), 20):
-            search = arxiv.Search(id_list=all_paper_ids[i:i+20])
-            batch = list(client.results(search))
-            bar.update(len(batch))
-            raw_papers.extend(batch)
+        for idx, i in enumerate(range(0, len(all_paper_ids), 20)):
+            if idx > 0:
+                time.sleep(5)
+            try:
+                search = arxiv.Search(id_list=all_paper_ids[i:i+20])
+                batch = list(client.results(search))
+                bar.update(len(batch))
+                raw_papers.extend(batch)
+            except Exception as e:
+                logger.warning(f"Batch {idx} failed: {e}, retrying after 30s...")
+                time.sleep(30)
+                try:
+                    search = arxiv.Search(id_list=all_paper_ids[i:i+20])
+                    batch = list(client.results(search))
+                    bar.update(len(batch))
+                    raw_papers.extend(batch)
+                except Exception as e2:
+                    logger.error(f"Batch {idx} failed again: {e2}, skipping.")
+                    bar.update(len(all_paper_ids[i:i+20]))
         
         bar.close()
         logger.info(f"Retrieved {len(raw_papers)} papers from category search")
